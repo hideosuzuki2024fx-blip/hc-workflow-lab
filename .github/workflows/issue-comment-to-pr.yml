@@ -1,0 +1,51 @@
+name: comment-to-pr (lab)
+on:
+  issue_comment:
+    types: [created]   # コメント投稿で起動
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  topr:
+    if: contains(github.event.comment.body, '/make-pr')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: prep
+        shell: bash
+        run: |
+          set -e
+          RAW="${{ github.event.issue.title }}"
+          [[ -z "$RAW" ]] && { echo "::error::Issue title is empty"; exit 1; }
+          NUM="${{ github.event.issue.number }}"
+          RUN="${GITHUB_RUN_ID}"
+
+          SAFE_BRANCH="$(echo "$RAW" | tr '[:upper:]' '[:lower:]' | tr '[:space:]' '-' | tr ':/\\@#%?*&|<>' '-' | tr -cd '[:alnum:]-_.')"
+          echo "BR=issue-${NUM}-r${RUN}-${SAFE_BRANCH}" >> $GITHUB_OUTPUT
+
+          SAFE_NAME="$(echo "$RAW" | tr '[:space:]' '_' | tr ':/\\@#%?*&|<>' '-' | tr -cd '[:alnum:]_.-')"
+          echo "FN=chats/${SAFE_NAME}-i${NUM}-r${RUN}.md" >> $GITHUB_OUTPUT
+
+      - name: write file & append simple index
+        env: { BODY: ${{ github.event.issue.body }} }
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$(dirname "${{ steps.prep.outputs.FN }}")"
+          printf '%s\n' "$BODY" > "${{ steps.prep.outputs.FN }}"
+          INDEX="chats/CHAT-INDEX.md"
+          echo "- $(basename "${{ steps.prep.outputs.FN }}")" >> "$INDEX"
+          git add "${{ steps.prep.outputs.FN }}" "$INDEX"
+
+      - name: create PR  # commitはこのActionが内部で実行
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: ${{ steps.prep.outputs.BR }}
+          base: main
+          title: "docs(lab): from issue #${{ github.event.issue.number }}"
+          commit-message: "docs(lab): add chat note + index"
+          body: "Auto-PR from comment /make-pr"
+          labels: needs-review
